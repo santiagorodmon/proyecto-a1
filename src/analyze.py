@@ -5,52 +5,74 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def analizar_con_claude(resumen_datos: dict) -> str:
-
+def analizar_con_claude(resumen_ipc: dict, resumen_banrep: dict) -> str:
+    """
+    Análisis integrado: IPC + Tasa Banrep + TRM.
+    El prompt aprovecha la formación económica del autor.
+    """
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    system_prompt = """Eres un economista senior especializado en economía colombiana con 
-experiencia en análisis macroeconómico para el sector privado.
+    system_prompt = """Eres un economista senior de una firma de consultoría colombiana.
+Produces reportes macroeconómicos de alta calidad para clientes del sector financiero,
+empresarial e institucional. Tu análisis siempre integra los tres pilares del diagnóstico
+macroeconómico colombiano: inflación (IPC), política monetaria (tasa Banrep) y tasa de
+cambio (TRM), mostrando las relaciones causales entre ellos.
 
-Cuando analices datos del IPC debes cubrir obligatoriamente:
-1. Contexto: ¿dónde estamos vs la meta del Banrep (3%) y vs el ciclo histórico reciente?
-2. Drivers: ¿qué sectores de la canasta explican la inflación actual?
-3. Política monetaria: implicaciones de la tasa actual del Banrep para empresas y hogares
-4. Impacto sectorial: qué sectores se benefician y cuáles se perjudican
-5. Proyección: hacia dónde va la inflación en los próximos 6 meses
-6. Recomendaciones: 3 acciones concretas para empresas colombianas
+Estructura OBLIGATORIA del reporte (completa todas las secciones):
+1. Triángulo macroeconómico: posición actual en los tres indicadores
+2. Relaciones causales: cómo se retroalimentan IPC, tasa y TRM en el ciclo actual
+3. Análisis del ciclo de política monetaria: recorrido y perspectivas
+4. Dinámica cambiaria: drivers de la TRM y su pass-through a la inflación
+5. Escenarios para H1 2026: base, optimista y adverso (tabla de 3 columnas)
+6. Recomendaciones diferenciadas: para importadores, exportadores y empresas de deuda
 
-Usa formato Markdown con secciones claras. Tono profesional pero accesible.
-Máximo 700 palabras. Sin emojis — usa texto plano y Markdown estándar (##, **, tablas).
-Sé preciso con los números — cítalos del contexto dado.
-Asegúrate de completar TODAS las secciones antes de terminar. 
-No cortes la respuesta a mitad de una tabla o sección."""
+Formato: Markdown limpio, sin emojis, tablas donde aplique.
+Extensión: 750-850 palabras. Cita los números exactos del contexto dado."""
 
-    user_message = f"""Analiza la siguiente situación inflacionaria de Colombia:
+    # Serializa fechas para JSON
+    import json
+    from datetime import datetime
 
-**Datos principales:**
-- Último dato disponible: {resumen_datos['ultimo_dato']}
-- Inflación anual más reciente: {resumen_datos['inflacion_anual_reciente']}%
-- Variación mensual más reciente: {resumen_datos['inflacion_mensual_reciente']}%
-- Promedio del período analizado: {resumen_datos['promedio_anual_periodo']}%
-- Máximo del período: {resumen_datos['maximo_anual']}%
-- Mínimo del período: {resumen_datos['minimo_anual']}%
-- Tendencia general: {resumen_datos['tendencia']}
+    def serialize(obj):
+        if hasattr(obj, "strftime"):
+            return obj.strftime("%Y-%m")
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return str(obj)
 
-**Contexto de política monetaria:**
-- Meta inflación Banrep: {resumen_datos['meta_banrep']}%
-- Brecha actual vs meta: +{resumen_datos['brecha_meta']} puntos porcentuales
-- Tasa de interés Banrep actual: {resumen_datos['tasa_banrep_actual']}% (enero 2026)
+    user_message = f"""Genera el reporte macroeconómico integrado con los siguientes datos:
 
-**Serie histórica mensual (más reciente primero):**
-{json.dumps(resumen_datos['datos_raw'], indent=2, ensure_ascii=False)}
+## INDICADOR 1 — IPC (DANE)
+- Inflación anual dic-2025: {resumen_ipc['inflacion_anual_reciente']}%
+- Variación mensual dic-2025: {resumen_ipc['inflacion_mensual_reciente']}%
+- Promedio del período: {resumen_ipc['promedio_anual_periodo']}%
+- Máximo registrado: {resumen_ipc['maximo_anual']}% (ene-2025)
+- Tendencia: {resumen_ipc['tendencia']}
+- Brecha vs meta Banrep (3%): +{resumen_ipc['brecha_meta']} pp
 
-Genera el reporte ejecutivo completo."""
+## INDICADOR 2 — TASA DE POLÍTICA MONETARIA (Banrep)
+- Tasa actual: {resumen_banrep['tasa_actual']}% (desde ene-2026)
+- Tasa hace 12 meses: {resumen_banrep['tasa_hace_1_año']}%
+- Máximo del ciclo: {resumen_banrep['tasa_maxima_ciclo']}% (sep-2023)
+- Recorte acumulado desde el pico: {resumen_banrep['recorte_acumulado_pbs']:.0f} pbs
+- Últimas decisiones:
+{json.dumps(resumen_banrep['ultimas_decisiones'], indent=2, default=serialize, ensure_ascii=False)}
 
-    print("→ Enviando a Claude API...")
+## INDICADOR 3 — TRM (Superintendencia Financiera)
+- TRM promedio dic-2025: ${resumen_banrep['trm_actual']:,.0f} COP/USD
+- Variación anual TRM: {resumen_banrep['trm_variacion_anual_pct']}%
+- Tendencia cambiaria: {resumen_banrep['trm_tendencia']}
+- Máximo del período: ${resumen_banrep['trm_max_periodo']:,.0f}
+- Mínimo del período: ${resumen_banrep['trm_min_periodo']:,.0f}
+- Serie mensual reciente:
+{json.dumps(resumen_banrep['trm_mensual_reciente'], indent=2, default=serialize, ensure_ascii=False)}
+
+Genera el reporte ejecutivo completo con las 6 secciones obligatorias."""
+
+    print("→ Enviando 3 indicadores a Claude API...")
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1800,
+        max_tokens=2000,
         messages=[{"role": "user", "content": user_message}],
         system=system_prompt
     )
